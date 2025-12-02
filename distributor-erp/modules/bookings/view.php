@@ -1,0 +1,264 @@
+<?php
+require_once '../../config/database.php';
+require_once '../../includes/functions.php';
+
+requireLogin();
+
+$conn = getDBConnection();
+$pageTitle = 'Booking Details';
+
+$bookingId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+
+if ($bookingId <= 0) {
+    $_SESSION['error_message'] = 'Invalid booking ID';
+    header('Location: list.php');
+    exit;
+}
+
+// Handle status update
+if (isset($_POST['update_status'])) {
+    $new_status = clean($_POST['status']);
+    $updateQuery = "UPDATE bookings SET status = '$new_status' WHERE id = $bookingId";
+    if ($conn->query($updateQuery)) {
+        $_SESSION['success_message'] = 'Status updated successfully!';
+        header('Location: view.php?id=' . $bookingId);
+        exit;
+    }
+}
+
+// Get booking details
+$bookingQuery = "SELECT b.*, 
+                 bk.name as booker_name,
+                 bk.booker_code,
+                 bk.phone as booker_phone,
+                 bk.commission_percentage,
+                 u.full_name as created_by
+                 FROM bookings b
+                 JOIN bookers bk ON b.booker_id = bk.id
+                 LEFT JOIN users u ON b.user_id = u.id
+                 WHERE b.id = $bookingId";
+$bookingResult = $conn->query($bookingQuery);
+
+if ($bookingResult->num_rows === 0) {
+    $_SESSION['error_message'] = 'Booking not found';
+    header('Location: list.php');
+    exit;
+}
+
+$booking = $bookingResult->fetch_assoc();
+
+// Get booking items
+$itemsQuery = "SELECT bi.*, p.name as product_name, p.sku, p.unit 
+               FROM booking_items bi
+               JOIN products p ON bi.product_id = p.id
+               WHERE bi.booking_id = $bookingId";
+$items = $conn->query($itemsQuery);
+
+// Calculate commission
+$commission = ($booking['total_amount'] * $booking['commission_percentage']) / 100;
+
+include '../../includes/header.php';
+?>
+
+<!-- Page Header -->
+<div class="mb-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800">Booking Details</h1>
+            <p class="text-gray-600"><?php echo $booking['booking_number']; ?></p>
+        </div>
+        <div class="flex gap-2">
+            <a href="list.php" class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-semibold transition">
+                Back to List
+            </a>
+            <?php if ($booking['status'] !== 'invoiced' && $booking['status'] !== 'cancelled'): ?>
+                <a href="edit.php?id=<?php echo $booking['id']; ?>" 
+                   class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-semibold transition">
+                    Edit Booking
+                </a>
+            <?php endif; ?>
+            <?php if ($booking['status'] === 'confirmed'): ?>
+                <a href="convert_invoice.php?id=<?php echo $booking['id']; ?>" 
+                   class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold transition">
+                    Convert to Invoice
+                </a>
+            <?php endif; ?>
+            <a href="invoice_print.php?id=<?php echo $booking['id']; ?>" 
+   target="_blank"
+   class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-2 rounded-lg font-semibold transition">
+    Print
+</a>
+
+        </div>
+    </div>
+</div>
+
+<!-- Status Badge -->
+<div class="mb-6">
+    <?php
+    $statusColors = [
+        'pending' => 'bg-yellow-100 text-yellow-700 border-yellow-300',
+        'confirmed' => 'bg-blue-100 text-blue-700 border-blue-300',
+        'invoiced' => 'bg-green-100 text-green-700 border-green-300',
+        'cancelled' => 'bg-red-100 text-red-700 border-red-300'
+    ];
+    $statusClass = $statusColors[$booking['status']] ?? 'bg-gray-100 text-gray-700 border-gray-300';
+    ?>
+    <div class="inline-flex items-center gap-4">
+        <span class="<?php echo $statusClass; ?> border px-4 py-2 rounded-lg text-lg font-semibold">
+            Status: <?php echo ucfirst($booking['status']); ?>
+        </span>
+        
+        <?php if ($booking['status'] !== 'invoiced' && $booking['status'] !== 'cancelled'): ?>
+            <form method="POST" class="inline-flex gap-2">
+                <select name="status" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="pending" <?php echo $booking['status'] === 'pending' ? 'selected' : ''; ?>>Pending</option>
+                    <option value="confirmed" <?php echo $booking['status'] === 'confirmed' ? 'selected' : ''; ?>>Confirmed</option>
+                    <option value="cancelled" <?php echo $booking['status'] === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
+                </select>
+                <button type="submit" name="update_status" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold transition">
+                    Update Status
+                </button>
+            </form>
+        <?php endif; ?>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+    <!-- Booker Information -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="text-lg font-bold text-gray-800 mb-4">Booker Information</h3>
+        <div class="space-y-3">
+            <div>
+                <p class="text-sm text-gray-500">Name</p>
+                <p class="font-semibold"><?php echo $booking['booker_name']; ?></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Code</p>
+                <p class="font-semibold"><?php echo $booking['booker_code']; ?></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Phone</p>
+                <p class="font-semibold"><?php echo $booking['booker_phone']; ?></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Commission Rate</p>
+                <p class="font-semibold text-blue-600"><?php echo $booking['commission_percentage']; ?>%</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Customer Information -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="text-lg font-bold text-gray-800 mb-4">Customer Information</h3>
+        <div class="space-y-3">
+            <div>
+                <p class="text-sm text-gray-500">Name</p>
+                <p class="font-semibold"><?php echo $booking['customer_name']; ?></p>
+            </div>
+            <?php if ($booking['customer_phone']): ?>
+                <div>
+                    <p class="text-sm text-gray-500">Phone</p>
+                    <p class="font-semibold"><?php echo $booking['customer_phone']; ?></p>
+                </div>
+            <?php endif; ?>
+            <?php if ($booking['customer_address']): ?>
+                <div>
+                    <p class="text-sm text-gray-500">Address</p>
+                    <p class="font-semibold"><?php echo $booking['customer_address']; ?></p>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Booking Information -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="text-lg font-bold text-gray-800 mb-4">Booking Information</h3>
+        <div class="space-y-3">
+            <div>
+                <p class="text-sm text-gray-500">Booking Date</p>
+                <p class="font-semibold"><?php echo formatDate($booking['booking_date']); ?></p>
+            </div>
+            <?php if ($booking['delivery_date']): ?>
+                <div>
+                    <p class="text-sm text-gray-500">Expected Delivery</p>
+                    <p class="font-semibold"><?php echo formatDate($booking['delivery_date']); ?></p>
+                </div>
+            <?php endif; ?>
+            <div>
+                <p class="text-sm text-gray-500">Created By</p>
+                <p class="font-semibold"><?php echo $booking['created_by'] ?? 'N/A'; ?></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Created At</p>
+                <p class="font-semibold"><?php echo formatDate($booking['created_at']); ?></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Products Table -->
+<div class="bg-white rounded-lg shadow overflow-hidden mb-6">
+    <div class="p-6 border-b">
+        <h3 class="text-lg font-bold text-gray-800">Products</h3>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full">
+            <thead class="bg-gray-50 border-b">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Quantity</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Unit Price</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Subtotal</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+                <?php 
+                $index = 1;
+                while ($item = $items->fetch_assoc()): 
+                ?>
+                    <tr>
+                        <td class="px-6 py-4"><?php echo $index++; ?></td>
+                        <td class="px-6 py-4">
+                            <div class="font-semibold"><?php echo $item['product_name']; ?></div>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-600"><?php echo $item['sku']; ?></td>
+                        <td class="px-6 py-4 text-right"><?php echo $item['quantity']; ?> <?php echo $item['unit']; ?></td>
+                        <td class="px-6 py-4 text-right"><?php echo formatCurrency($item['unit_price']); ?></td>
+                        <td class="px-6 py-4 text-right font-semibold"><?php echo formatCurrency($item['subtotal']); ?></td>
+                    </tr>
+                <?php endwhile; ?>
+            </tbody>
+            <tfoot class="bg-gray-50 border-t">
+                <tr>
+                    <td colspan="5" class="px-6 py-4 text-right font-bold">Total Amount:</td>
+                    <td class="px-6 py-4 text-right text-xl font-bold text-blue-600">
+                        <?php echo formatCurrency($booking['total_amount']); ?>
+                    </td>
+                </tr>
+                <tr>
+                    <td colspan="5" class="px-6 py-4 text-right font-semibold text-gray-600">
+                        Booker Commission (<?php echo $booking['commission_percentage']; ?>%):
+                    </td>
+                    <td class="px-6 py-4 text-right text-lg font-bold text-orange-600">
+                        <?php echo formatCurrency($commission); ?>
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- Notes -->
+<?php if ($booking['notes']): ?>
+    <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="text-lg font-bold text-gray-800 mb-4">Notes</h3>
+        <p class="text-gray-700"><?php echo nl2br($booking['notes']); ?></p>
+    </div>
+<?php endif; ?>
+
+<?php
+include '../../includes/footer.php';
+?>
